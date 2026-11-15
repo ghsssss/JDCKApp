@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
     private volatile boolean pushing = false;
 
     private static final String LOGIN_URL = "https://plogin.m.jd.com/login/login";
+    private static final String DEFAULT_QL_URL = "http://192.168.50.143:5700";
     private static final String[] COOKIE_URLS = {
             "https://www.jd.com", "https://passport.jd.com", "https://m.jd.com", "https://plogin.m.jd.com"
     };
@@ -156,7 +157,7 @@ public class MainActivity extends Activity {
         box.setPadding(pad, pad / 2, pad, 0);
 
         EditText etUrl = new EditText(this);
-        etUrl.setHint("青龙地址，如 http://192.168.50.143:5700");
+        etUrl.setHint("青龙地址（留空则用默认值）");
         etUrl.setText(sp.getString("ql_url", ""));
         box.addView(etUrl);
 
@@ -185,6 +186,20 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    private String normalizeQlUrl(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        if (s.isEmpty()) {
+            return DEFAULT_QL_URL;
+        }
+        if (!s.startsWith("http://") && !s.startsWith("https://")) {
+            s = "http://" + s;
+        }
+        if (s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+
     private void pushQinglong() {
         if (pushing) {
             return;
@@ -196,16 +211,17 @@ public class MainActivity extends Activity {
             toast("还没有登录态，先登录京东");
             return;
         }
-        String base = sp.getString("ql_url", "").trim();
+        String raw = sp.getString("ql_url", "");
+        String base = normalizeQlUrl(raw);
         String cid = sp.getString("ql_cid", "").trim();
         String secret = sp.getString("ql_secret", "").trim();
-        if (base.isEmpty() || cid.isEmpty() || secret.isEmpty()) {
-            toast("请先在「设置」里配置青龙地址和密钥");
+        if (cid.isEmpty() || secret.isEmpty()) {
+            toast("请先在「设置」里配置青龙密钥");
             showSettings();
             return;
         }
-        if (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
+        if (!base.equals(raw)) {
+            sp.edit().putString("ql_url", base).apply();
         }
         pushing = true;
         status.setText("正在推送青龙…");
