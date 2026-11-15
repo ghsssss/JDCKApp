@@ -86,8 +86,25 @@ class Qinglong:
         return self._req("POST", "/open/envs",
                          [{"name": "JD_COOKIE", "value": value}])
 
+    def enable(self, env_ids):
+        """青龙 2.24: PUT /open/envs/enable，body 为 id 数组，status 置为 normal(0)"""
+        ids = [int(i) for i in env_ids if i]
+        if not ids:
+            return None
+        return self._req("PUT", "/open/envs/enable", ids)
+
 
 ql = Qinglong()
+
+
+def ensure_enabled(env_id):
+    """同步 CK 后确保变量处于非禁用状态"""
+    try:
+        ql.enable([env_id])
+        return "（变量已启用）"
+    except Exception as e:
+        log(f"启用变量失败 id={env_id}: {e}")
+        return "（⚠️ 变量启用失败，请手动检查）"
 
 
 def merge_cks(new_ck):
@@ -98,31 +115,38 @@ def merge_cks(new_ck):
 
     envs = [e for e in ql.get_envs() if e.get("name") == "JD_COOKIE"]
 
-    # 找该账号已存在的环境变量
-    target = None
+    # 找该账号已存在的环境变量，优先选未禁用（status=0）的那条
+    candidates = []
     for e in envs:
         for s in split_segments(e.get("value", "")):
             p = pin_of(s)
             if p and p.lower() == new_pin.lower():
-                target = e
+                candidates.append(e)
                 break
-        if target:
-            break
+    target = None
+    if candidates:
+        target = next((e for e in candidates if str(e.get("status", 0)) == "0"),
+                      candidates[0])
 
     if target:
         kept = [s for s in split_segments(target.get("value", ""))
                 if not (pin_of(s) and pin_of(s).lower() == new_pin.lower())]
         kept.append(new_ck)
         ql.update(target["id"], "\n".join(kept))
-        return f"✅ 已更新 {new_pin}"
+        return f"✅ 已更新 {new_pin}" + ensure_enabled(target["id"])
     elif envs:
         segs = split_segments(envs[0].get("value", ""))
         segs.append(new_ck)
         ql.update(envs[0]["id"], "\n".join(segs))
-        return f"✅ 已新增 {new_pin}"
+        return f"✅ 已新增 {new_pin}" + ensure_enabled(envs[0]["id"])
     else:
         ql.create(new_ck)
-        return f"✅ 已新建变量并写入 {new_pin}"
+        created = [e for e in ql.get_envs()
+                   if e.get("name") == "JD_COOKIE"
+                   and any((pin_of(s) or "").lower() == new_pin.lower()
+                           for s in split_segments(e.get("value", "")))]
+        extra = ensure_enabled(created[0]["id"]) if created else ""
+        return f"✅ 已新建变量并写入 {new_pin}" + extra
 
 
 class CKBotHandler(dingtalk_stream.ChatbotHandler):
