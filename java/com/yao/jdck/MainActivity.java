@@ -291,53 +291,66 @@ public class MainActivity extends Activity {
             throw new Exception("读取环境变量失败：" + list);
         }
         JSONArray data = list.optJSONArray("data");
-        JSONObject env = null;
+        String newPin = extractPin(currentCk);
+        JSONObject dedicated = null;
+        JSONObject mixed = null;
         if (data != null) {
             for (int i = 0; i < data.length(); i++) {
                 JSONObject e = data.getJSONObject(i);
-                if ("JD_COOKIE".equals(e.optString("name"))) {
-                    env = e;
-                    break;
+                if (!"JD_COOKIE".equals(e.optString("name"))) continue;
+                String[] lines = e.optString("value", "").split("\n");
+                int count = 0;
+                boolean hit = false;
+                for (String line : lines) {
+                    if (line.trim().isEmpty()) continue;
+                    count++;
+                    String p = extractPin(line);
+                    if (p != null && p.equalsIgnoreCase(newPin)) hit = true;
                 }
+                if (!hit) continue;
+                if (count == 1 && dedicated == null) dedicated = e;
+                else if (count > 1 && mixed == null) mixed = e;
             }
         }
 
-        String newPin = extractPin(currentCk);
         long targetId;
         JSONObject done;
-        if (env != null) {
-            // 3a. 已有变量：按 pt_pin 合并（同账号覆盖，其它账号保留）
-            StringBuilder kept = new StringBuilder();
-            String val = env.optString("value", "");
-            for (String line : val.split("\n")) {
-                if (line.trim().isEmpty()) continue;
-                String p = extractPin(line);
-                if (p != null && p.equalsIgnoreCase(newPin)) continue;
-                if (kept.length() > 0) kept.append('\n');
-                kept.append(line.trim());
-            }
-            if (kept.length() > 0) kept.append('\n');
-            kept.append(currentCk);
-            targetId = env.optLong("id");
+        String act;
+        if (dedicated != null) {
+            targetId = dedicated.optLong("id");
             JSONObject upd = new JSONObject()
                     .put("id", targetId)
                     .put("name", "JD_COOKIE")
-                    .put("value", kept.toString());
+                    .put("value", currentCk);
             done = new JSONObject(http(base + "/open/envs", "PUT", upd, token));
+            act = "已更新专属变量";
         } else {
-            // 3b. 没有变量：新建
+            if (mixed != null) {
+                StringBuilder kept = new StringBuilder();
+                for (String line : mixed.optString("value", "").split("\n")) {
+                    if (line.trim().isEmpty()) continue;
+                    String p = extractPin(line);
+                    if (p != null && p.equalsIgnoreCase(newPin)) continue;
+                    if (kept.length() > 0) kept.append('\n');
+                    kept.append(line.trim());
+                }
+                JSONObject upd = new JSONObject()
+                        .put("id", mixed.optLong("id"))
+                        .put("name", "JD_COOKIE")
+                        .put("value", kept.length() > 0 ? kept.toString() : " ");
+                http(base + "/open/envs", "PUT", upd, token);
+            }
             JSONArray arr = new JSONArray();
             arr.put(new JSONObject().put("name", "JD_COOKIE").put("value", currentCk));
             done = new JSONObject(http(base + "/open/envs", "POST", arr, token));
             JSONObject after = new JSONObject(http(base + "/open/envs?searchValue=JD_COOKIE", "GET", null, token));
             targetId = findEnvId(after.optJSONArray("data"), newPin);
+            act = mixed != null ? "已拆出并新建专属变量" : "已新建专属变量";
         }
         if (done.optInt("code") != 200) {
             throw new Exception("写入环境变量失败：" + done);
         }
-        return "推送成功：" + newPin + " 已写入青龙 JD_COOKIE"
-                + (env != null ? "（合并保留其它账号）" : "")
-                + enableEnv(base, token, targetId);
+        return "推送成功：" + newPin + " " + act + "（每号一条）" + enableEnv(base, token, targetId);
     }
 
     private String http(String urlStr, String method, Object body, String token) throws Exception {

@@ -108,45 +108,55 @@ def ensure_enabled(env_id):
 
 
 def merge_cks(new_ck):
-    """把 new_ck 按 pt_pin 合并进 JD_COOKIE，返回结果描述"""
+    """每个 pt_pin 独占一条 JD_COOKIE 变量；返回处理结果描述"""
     new_pin = pin_of(new_ck)
     if not new_pin or not KEY_RE.search(new_ck):
         return "❌ 消息里没识别到 pt_key/pt_pin"
 
     envs = [e for e in ql.get_envs() if e.get("name") == "JD_COOKIE"]
 
-    # 找该账号已存在的环境变量，优先选未禁用（status=0）的那条
-    candidates = []
+    # 1) 找该 pin 的专属变量（value 中只有这一个账号）
+    dedicated = []
+    mixed = []
     for e in envs:
-        for s in split_segments(e.get("value", "")):
-            p = pin_of(s)
-            if p and p.lower() == new_pin.lower():
-                candidates.append(e)
-                break
-    target = None
-    if candidates:
-        target = next((e for e in candidates if str(e.get("status", 0)) == "0"),
-                      candidates[0])
+        segs = split_segments(e.get("value", ""))
+        pins = [pin_of(s) for s in segs]
+        hit = any(p and p.lower() == new_pin.lower() for p in pins)
+        if not hit:
+            continue
+        if len(segs) == 1:
+            dedicated.append(e)
+        else:
+            mixed.append(e)
 
-    if target:
-        kept = [s for s in split_segments(target.get("value", ""))
-                if not (pin_of(s) and pin_of(s).lower() == new_pin.lower())]
-        kept.append(new_ck)
-        ql.update(target["id"], "\n".join(kept))
-        return f"✅ 已更新 {new_pin}" + ensure_enabled(target["id"])
-    elif envs:
-        segs = split_segments(envs[0].get("value", ""))
-        segs.append(new_ck)
-        ql.update(envs[0]["id"], "\n".join(segs))
-        return f"✅ 已新增 {new_pin}" + ensure_enabled(envs[0]["id"])
+    notes = []
+    if dedicated:
+        target = next((e for e in dedicated if str(e.get("status", 0)) == "0"),
+                      dedicated[0])
+        ql.update(target["id"], new_ck)
+        notes.append("已更新")
     else:
+        # 2) 不在专属变量里：先把它从多账号变量中摘掉
+        for e in mixed:
+            kept = [s for s in split_segments(e.get("value", ""))
+                    if not ((pin_of(s) or "").lower() == new_pin.lower())]
+            ql.update(e["id"], "\n".join(kept) if kept else " ")
+            notes.append("已从多账号变量移除")
+            break
+        # 3) 新建该 pin 的专属变量
         ql.create(new_ck)
-        created = [e for e in ql.get_envs()
-                   if e.get("name") == "JD_COOKIE"
-                   and any((pin_of(s) or "").lower() == new_pin.lower()
-                           for s in split_segments(e.get("value", "")))]
-        extra = ensure_enabled(created[0]["id"]) if created else ""
-        return f"✅ 已新建变量并写入 {new_pin}" + extra
+        target = None
+        for e in ql.get_envs():
+            if e.get("name") != "JD_COOKIE":
+                continue
+            segs = split_segments(e.get("value", ""))
+            if len(segs) == 1 and (pin_of(segs[0]) or "").lower() == new_pin.lower():
+                target = e
+                break
+        notes.append("已新建专属变量")
+
+    extra = ensure_enabled(target["id"]) if target else "（⚠️ 未能定位变量，启用状态未确认）"
+    return f"✅ {new_pin} " + "、".join(notes) + extra
 
 
 class CKBotHandler(dingtalk_stream.ChatbotHandler):
