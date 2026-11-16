@@ -242,6 +242,30 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    private long findEnvId(JSONArray data, String pin) throws Exception {
+        if (data == null) return 0;
+        for (int i = 0; i < data.length(); i++) {
+            JSONObject e = data.getJSONObject(i);
+            if (!"JD_COOKIE".equals(e.optString("name"))) continue;
+            for (String line : e.optString("value", "").split("\n")) {
+                String p = extractPin(line);
+                if (p != null && p.equalsIgnoreCase(pin)) return e.optLong("id");
+            }
+        }
+        return 0;
+    }
+
+    private String enableEnv(String base, String token, long envId) {
+        if (envId <= 0) return "（⚠️ 未能定位变量，启用状态未确认）";
+        try {
+            JSONArray ids = new JSONArray().put(envId);
+            JSONObject r = new JSONObject(http(base + "/open/envs/enable", "PUT", ids, token));
+            return r.optInt("code") == 200 ? "（变量已启用）" : "（⚠️ 启用失败，请手动检查）";
+        } catch (Exception e) {
+            return "（⚠️ 启用失败，请手动检查）";
+        }
+    }
+
     private String push(String base, String cid, String secret) throws Exception {
         // 1. 认证拿 token（青龙 2.24+ 为 GET /open/auth/token）
         String qs = "client_id=" + URLEncoder.encode(cid, "UTF-8")
@@ -271,6 +295,7 @@ public class MainActivity extends Activity {
         }
 
         String newPin = extractPin(currentCk);
+        long targetId;
         JSONObject done;
         if (env != null) {
             // 3a. 已有变量：按 pt_pin 合并（同账号覆盖，其它账号保留）
@@ -285,8 +310,9 @@ public class MainActivity extends Activity {
             }
             if (kept.length() > 0) kept.append('\n');
             kept.append(currentCk);
+            targetId = env.optLong("id");
             JSONObject upd = new JSONObject()
-                    .put("id", env.optLong("id"))
+                    .put("id", targetId)
                     .put("name", "JD_COOKIE")
                     .put("value", kept.toString());
             done = new JSONObject(http(base + "/open/envs", "PUT", upd, token));
@@ -295,11 +321,15 @@ public class MainActivity extends Activity {
             JSONArray arr = new JSONArray();
             arr.put(new JSONObject().put("name", "JD_COOKIE").put("value", currentCk));
             done = new JSONObject(http(base + "/open/envs", "POST", arr, token));
+            JSONObject after = new JSONObject(http(base + "/open/envs?searchValue=JD_COOKIE", "GET", null, token));
+            targetId = findEnvId(after.optJSONArray("data"), newPin);
         }
         if (done.optInt("code") != 200) {
             throw new Exception("写入环境变量失败：" + done);
         }
-        return "推送成功：" + newPin + " 已写入青龙 JD_COOKIE" + (env != null ? "（合并保留其它账号）" : "");
+        return "推送成功：" + newPin + " 已写入青龙 JD_COOKIE"
+                + (env != null ? "（合并保留其它账号）" : "")
+                + enableEnv(base, token, targetId);
     }
 
     private String http(String urlStr, String method, Object body, String token) throws Exception {
