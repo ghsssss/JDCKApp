@@ -13,6 +13,7 @@ import android.os.Looper;
 import android.webkit.CookieManager;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebStorage;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -75,7 +76,14 @@ public class MainActivity extends Activity {
         findViewById(R.id.btnCopy).setOnClickListener(v -> copyCk());
         findViewById(R.id.btnPush).setOnClickListener(v -> pushQinglong());
         findViewById(R.id.btnSetting).setOnClickListener(v -> showSettings());
-        findViewById(R.id.btnReload).setOnClickListener(v -> webView.loadUrl(LOGIN_URL));
+        findViewById(R.id.btnReload).setOnClickListener(v -> {
+            CookieManager.getInstance().removeAllCookies(null);
+            CookieManager.getInstance().flush();
+            WebStorage.getInstance().deleteAllData();
+            currentCk = "";
+            status.setText("已清除登录态，请在上方重新登录");
+            webView.loadUrl(LOGIN_URL);
+        });
     }
 
     @Override
